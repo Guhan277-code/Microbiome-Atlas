@@ -9,12 +9,9 @@ const STEPS = ['upload', 'configure', 'validate', 'preview', 'analysis'] as cons
 const LABELS = ['Upload', 'Configure', 'Validate', 'Preview', 'Analyse']
 
 export default function Wizard({ step }: { step: string }) {
-  const { draft, go, datasets, active, setDraft, user, signIn } = useApp()
+  const { draft, go, datasets, active, setDraft } = useApp()
   const idx = Math.max(0, STEPS.indexOf(step as (typeof STEPS)[number]))
   const max = draft ? Math.max(draft.maxStep, 0) : 0
-  useEffect(() => {
-    if (!user) signIn('Guest Researcher', true)
-  }, [user, signIn])
   useEffect(() => {
     if (!location.hash.startsWith('#/new')) return
     if (idx > 0 && !draft) go('/new/upload')

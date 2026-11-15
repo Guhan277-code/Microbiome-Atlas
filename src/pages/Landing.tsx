@@ -91,14 +91,16 @@ export default function Landing() {
         </nav>
         <div className="flex items-center gap-2">
           <ThemeSwitch />
-          <Btn size="sm" className="hidden sm:inline-flex" onClick={() => go('/signin')}>Sign in</Btn>
+          <Btn size="sm" className="hidden sm:inline-flex" onClick={() => go(user ? '/app/overview' : '/signin')}>
+            {user ? 'Workspace' : 'Sign in'}
+          </Btn>
           <Btn variant="primary" size="sm" onClick={start}>Get Started <ArrowRight size={14} /></Btn>
           <button className="btn btn-icon btn-sm md:hidden" onClick={() => setOpen(!open)} aria-label="Menu">{open ? <X size={16} /> : <Menu size={16} />}</button>
         </div>
         {open && (
           <div className="pop absolute top-full right-0 left-0 mt-2 rounded-2xl border border-line bg-solid p-2 md:hidden">
             {links.map(([id, l]) => <button key={id} onClick={() => scroll(id)} className="block w-full rounded-lg px-3 py-3 text-left text-sm hover:bg-[var(--row)]">{l}</button>)}
-            <button onClick={() => go('/signin')} className="block w-full rounded-lg px-3 py-3 text-left text-sm hover:bg-[var(--row)]">Sign in</button>
+            <button onClick={() => go(user ? '/app/overview' : '/signin')} className="block w-full rounded-lg px-3 py-3 text-left text-sm hover:bg-[var(--row)]">{user ? 'Workspace' : 'Sign in'}</button>
           </div>
         )}
       </header>

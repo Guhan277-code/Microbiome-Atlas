@@ -138,7 +138,7 @@ function Profile() {
       <button onClick={() => setOpen(!open)} className="btn btn-icon !rounded-full bg-gradient-to-br from-brand to-violet text-sm text-white" aria-label="User menu">{name.slice(0, 2).toUpperCase()}</button>
       {open && (
         <div className="pop absolute top-full right-0 z-50 mt-2 w-56 rounded-2xl border border-line p-2 shadow-2xl" style={{ background: 'var(--solid)' }}>
-          <div className="px-3 py-2"><div className="text-sm font-bold">{name}</div><div className="text-xs text-muted">{user?.guest ? 'Guest (prototype session)' : 'Prototype account'}</div></div>
+          <div className="px-3 py-2"><div className="text-sm font-bold">{name}</div><div className="text-xs text-muted truncate">{user?.guest ? 'Guest (Local session)' : user?.email || 'Authenticated account'}</div></div>
           <button className="block w-full rounded-xl px-3 py-2 text-left text-sm hover:bg-[var(--row)]" onClick={() => { setOpen(false); go('/app/settings') }}>Settings</button>
           <button className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm hover:bg-[var(--row)]" onClick={signOut}><LogOut size={14} /> Sign out</button>
         </div>
