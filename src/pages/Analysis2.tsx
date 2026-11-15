@@ -37,7 +37,7 @@ function TaxInner() {
     const root: Node = { id: '', name: 'root', depth: -1, rank: '', children: [], feats: [] }
     const byId = new Map<string, Node>()
     M.meta.forEach((m, j) => {
-      const path = m.lineage ? m.lineage.split(';').map((x) => x.trim()).filter(Boolean) : [m.organism]
+      const path = m.lineage ? m.lineage.split(';').map((x) => x.trim()).filter(Boolean) : [m.organism || 'Unknown']
       let cur = root
       path.forEach((p, depth) => {
         const id = path.slice(0, depth + 1).join('|')
@@ -54,7 +54,17 @@ function TaxInner() {
     return { root, byId }
   }, [M])
   const R = useMemo(() => relMatrix(M.X), [M])
-  const per = (n: Node) => M.samples.map((_, i) => ({ raw: n.feats.reduce((a, j) => a + M.X[i][j], 0), rel: n.feats.reduce((a, j) => a + R[i][j], 0) * 100 }))
+  const per = (n: Node) =>
+    M.samples.map((_, i) => ({
+      raw: n.feats.reduce((a, j) => a + (M.X[i]?.[j] ?? 0), 0),
+      rel: n.feats.reduce((a, j) => a + (R[i]?.[j] ?? 0), 0) * 100,
+    }))
+
+  // Automatically select the first taxon if none is currently selected
+  const activeNode = sel
+    ? byId.get(sel) ?? null
+    : root.children[0] ?? null
+
   useEffect(() => {
     if (!organism) return
     const n = [...byId.values()].find((x) => x.name === organism)
@@ -65,19 +75,26 @@ function TaxInner() {
     }
     setOrganism(null)
   }, [organism, byId, setOrganism])
+
   const t = q.trim().toLowerCase()
   const maxDepth = rank === 'All' ? 99 : LEVELS.indexOf(rank as never)
-  const matches = (n: Node): boolean => n.name.toLowerCase().includes(t) || n.children.some(matches)
-  const meanRel = (n: Node) => per(n).reduce((a, x) => a + x.rel, 0) / M.samples.length
+  const matches = (n: Node): boolean => ((n.name ?? '').toLowerCase().includes(t)) || n.children.some(matches)
+  const meanRel = (n: Node) => {
+    if (!M.samples.length) return 0
+    const p = per(n)
+    return p.reduce((a, x) => a + x.rel, 0) / M.samples.length
+  }
+
   const render = (n: Node): React.ReactNode => {
     if (t && !matches(n)) return null
     if (hasLineage && n.depth > maxDepth) return null
     const kids = n.children.filter((c) => (!t || matches(c)) && (!hasLineage || c.depth <= maxDepth))
     const isOpen = t ? true : open.has(n.id)
-    const total = n.feats.reduce((a, j) => a + M.X.reduce((s, r) => s + r[j], 0), 0)
+    const total = n.feats.reduce((a, j) => a + M.X.reduce((s, r) => s + (r[j] ?? 0), 0), 0)
+    const isSelected = activeNode?.id === n.id
     return (
       <div key={n.id}>
-        <div className={`flex items-center gap-1 rounded-lg py-1 pr-2 transition-colors hover:bg-[var(--row)] ${sel === n.id ? 'bg-brand/15' : ''}`} style={{ paddingLeft: n.depth * 18 + 4 }}>
+        <div className={`flex items-center gap-1 rounded-lg py-1 pr-2 transition-colors hover:bg-[var(--row)] ${isSelected ? 'bg-brand/15' : ''}`} style={{ paddingLeft: n.depth * 18 + 4 }}>
           <button className="grid h-6 w-6 shrink-0 place-items-center text-muted" aria-label={isOpen ? 'Collapse' : 'Expand'} disabled={!kids.length} onClick={() => setOpen((o) => { const s = new Set(o); if (s.has(n.id)) s.delete(n.id); else s.add(n.id); return s })}>
             {kids.length ? isOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} /> : <i className="h-1.5 w-1.5 rounded-full bg-faint" />}
           </button>
@@ -91,9 +108,18 @@ function TaxInner() {
       </div>
     )
   }
-  const node = sel ? byId.get(sel) : null
-  const nd = node ? per(node) : []
-  const grp = d.groups.map((g) => { const ix = M.samples.map((_s, i) => i).filter((i) => M.groupOf[M.samples[i]] === g); return { g, v: ix.reduce((a, i) => a + (mode === 'relative' ? nd[i].rel : nd[i].raw), 0) / Math.max(1, ix.length) } })
+
+  const nd = activeNode ? per(activeNode) : []
+  const grp = activeNode && nd.length
+    ? d.groups.map((g) => {
+        const ix = M.samples.map((_s, i) => i).filter((i) => M.groupOf[M.samples[i]] === g)
+        return {
+          g,
+          v: ix.reduce((a, i) => a + (mode === 'relative' ? (nd[i]?.rel ?? 0) : (nd[i]?.raw ?? 0)), 0) / Math.max(1, ix.length),
+        }
+      })
+    : []
+
   return (
     <div className="grid gap-5 lg:grid-cols-5">
       <Card lift={false} className="p-5 lg:col-span-2">
@@ -110,22 +136,22 @@ function TaxInner() {
         <div className="max-h-[560px] overflow-auto" role="tree">{root.children.map(render)}</div>
       </Card>
       <div className="space-y-5 lg:col-span-3">
-        {!node ? (
+        {!activeNode ? (
           <Card lift={false} className="p-10 text-center text-muted">Select a taxon in the tree to inspect its abundance across samples and groups.</Card>
         ) : (
           <>
             <Card lift={false} className="p-5">
-              <div className="flex flex-wrap items-center gap-2"><h2 className="text-xl font-bold">{node.name}</h2><Badge tone="info">{node.rank}</Badge></div>
-              <p className="sci mt-1 text-xs text-muted">{node.id.split('|').join(' > ')}</p>
-              <div className="mono mt-3 grid grid-cols-3 gap-3 text-sm"><div><div className="label">Features</div>{node.feats.length}</div><div><div className="label">Total reads</div>{nd.reduce((a, x) => a + x.raw, 0).toLocaleString()}</div><div><div className="label">Mean rel.</div>{fmt(nd.reduce((a, x) => a + x.rel, 0) / nd.length, 3)}%</div></div>
-              {node.feats.length <= 6 && <p className="sci mt-3 text-xs text-muted">Organisms: {node.feats.map((j) => `${M.meta[j].organism} (${M.features[j]})`).join(', ')}</p>}
+              <div className="flex flex-wrap items-center gap-2"><h2 className="text-xl font-bold">{activeNode.name}</h2><Badge tone="info">{activeNode.rank}</Badge></div>
+              <p className="sci mt-1 text-xs text-muted">{activeNode.id.split('|').join(' > ')}</p>
+              <div className="mono mt-3 grid grid-cols-3 gap-3 text-sm"><div><div className="label">Features</div>{activeNode.feats.length}</div><div><div className="label">Total reads</div>{nd.reduce((a, x) => a + x.raw, 0).toLocaleString()}</div><div><div className="label">Mean rel.</div>{fmt(nd.reduce((a, x) => a + x.rel, 0) / Math.max(1, nd.length), 3)}%</div></div>
+              {activeNode.feats.length <= 6 && <p className="sci mt-3 text-xs text-muted">Organisms: {activeNode.feats.map((j) => `${M.meta[j]?.organism ?? 'Unknown'} (${M.features[j] ?? j})`).join(', ')}</p>}
             </Card>
             <ChartCard title="Distribution across samples">
-              <Bars title={`${node.name} per sample`} xLabel="Sample" yLabel={mode === 'relative' ? 'Relative abundance (%)' : 'Raw abundance (reads)'} items={M.samples.map((s, i) => ({ label: s, value: mode === 'relative' ? nd[i].rel : nd[i].raw, color: colorOf(M.groupOf[s]) }))} fmtV={mode === 'relative' ? (v) => v.toFixed(2) : undefined} />
+              <Bars title={`${activeNode.name} per sample`} xLabel="Sample" yLabel={mode === 'relative' ? 'Relative abundance (%)' : 'Raw abundance (reads)'} items={M.samples.map((s, i) => ({ label: s, value: mode === 'relative' ? (nd[i]?.rel ?? 0) : (nd[i]?.raw ?? 0), color: colorOf(M.groupOf[s]) }))} fmtV={mode === 'relative' ? (v) => v.toFixed(2) : undefined} />
               <Legend items={d.groups.map((g) => ({ label: g, color: colorOf(g) }))} />
             </ChartCard>
             <ChartCard title="Distribution across groups" sub="Mean per sample in each group">
-              <Bars title={`${node.name} per group`} xLabel="Sample group" yLabel={mode === 'relative' ? 'Mean relative abundance (%)' : 'Mean raw abundance (reads)'} items={grp.map((x) => ({ label: x.g, value: x.v, color: colorOf(x.g) }))} fmtV={mode === 'relative' ? (v) => v.toFixed(2) : undefined} />
+              <Bars title={`${activeNode.name} per group`} xLabel="Sample group" yLabel={mode === 'relative' ? 'Mean relative abundance (%)' : 'Mean raw abundance (reads)'} items={grp.map((x) => ({ label: x.g, value: x.v, color: colorOf(x.g) }))} fmtV={mode === 'relative' ? (v) => v.toFixed(2) : undefined} />
             </ChartCard>
           </>
         )}

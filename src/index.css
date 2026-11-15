@@ -512,6 +512,17 @@ html[data-theme='light'] {
 }
 
 @media print {
+  *,
+  *::before,
+  *::after {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color-adjust: exact !important;
+  }
+  body {
+    background: #ffffff !important;
+    color: #0f172a !important;
+  }
   body * {
     visibility: hidden;
   }
@@ -523,18 +534,79 @@ html[data-theme='light'] {
     position: absolute;
     left: 0;
     top: 0;
-    width: 100%;
-    background: #fff !important;
-    color: #111 !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 32px !important;
+    background: #ffffff !important;
+    color: #0f172a !important;
+    border: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+  }
+  .print-area h2,
+  .print-area h3,
+  .print-area h4 {
+    color: #0f172a !important;
+    font-weight: 800 !important;
+  }
+  .print-area p,
+  .print-area span,
+  .print-area li,
+  .print-area td {
+    color: #1e293b !important;
+    font-weight: 500 !important;
+  }
+  .print-area .text-muted,
+  .print-area .sci,
+  .print-area .text-faint {
+    color: #334155 !important;
+    font-weight: 500 !important;
+  }
+  .print-area .tbl th {
+    color: #0f172a !important;
+    font-weight: 700 !important;
+    border-bottom: 2px solid #94a3b8 !important;
+    background-color: #f1f5f9 !important;
+  }
+  .print-area .tbl td {
+    color: #1e293b !important;
+    border-bottom: 1px solid #e2e8f0 !important;
+  }
+  .print-area svg text {
+    fill: #0f172a !important;
+    font-weight: 600 !important;
+  }
+  .print-area svg line {
+    stroke: #cbd5e1 !important;
+  }
+  .print-area .card {
+    background: #ffffff !important;
+    border: 1px solid #cbd5e1 !important;
+    box-shadow: none !important;
+  }
+  .print-area .chip {
+    border: 1px solid #94a3b8 !important;
+    font-weight: 700 !important;
   }
 }
 
-@media print {
-  .print-area svg text {
-    fill: #222 !important;
-  }
-  .print-area .text-muted,
-  .print-area .sci {
-    color: #444 !important;
-  }
+/* Vibrant styling for on-screen report preview */
+.print-area {
+  border: 1px solid var(--line);
+  box-shadow: 0 20px 45px -15px rgba(0, 0, 0, 0.4);
+}
+.print-area h2 {
+  color: var(--text);
+  letter-spacing: -0.02em;
+}
+.print-area h3 {
+  color: var(--text);
+}
+.print-area .tbl th {
+  color: var(--text);
+  font-weight: 700;
+  border-bottom: 2px solid var(--line);
+}
+.print-area .tbl td {
+  color: var(--text);
 }

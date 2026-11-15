@@ -273,5 +273,10 @@ function ReportsInner() {
   )
 }
 function Sec({ t, children }: { t: string; children: React.ReactNode }) {
-  return <section className="mt-6 border-t border-line pt-4"><h3 className="mb-2 text-lg font-bold">{t}</h3>{children}</section>
+  return (
+    <section className="mt-6 border-t-2 border-line/60 pt-5">
+      <h3 className="mb-3 text-lg font-extrabold tracking-tight text-ink">{t}</h3>
+      {children}
+    </section>
+  )
 }
