@@ -69,17 +69,17 @@ const STEPS = [
 ]
 const FAQ = [
   ['Does Microbiome Atlas process raw sequencing files?', 'No. It analyses prepared abundance tables in CSV format. FASTQ files and sequencing pipelines are not supported.'],
-  ['Is my data uploaded to a server?', 'No. Files are parsed and analysed locally in your browser tab. Datasets are not stored permanently and disappear when you reload.'],
-  ['Are accounts real?', 'Sign-in screens are prototypes. No credentials are sent, stored or verified.'],
+  ['Is my data uploaded to a server?', 'Abundance data is parsed and computed in your browser tab for high performance, with datasets and analysis history securely synced to your Supabase account under Row Level Security.'],
+  ['Are accounts real?', 'Yes. Authentication is fully powered by Supabase Auth with Row Level Security. You can create an account, sign in, or explore immediately using a local guest session.'],
   ['Does higher diversity mean a healthier microbiome?', 'No. Diversity metrics describe community structure. Interpretation depends on the habitat and study design.'],
   ['Can I use it to diagnose a condition?', 'No. The platform is for exploratory research analysis and does not provide diagnoses.'],
 ]
 
 export default function Landing() {
-  const { go, user } = useApp()
+  const { go, user, active } = useApp()
   const [open, setOpen] = useState(false)
   const [faq, setFaq] = useState<number | null>(0)
-  const start = () => go(user ? '/new/upload' : '/signin')
+  const start = () => go(user ? (active ? '/app/overview' : '/new/upload') : '/signin')
   const scroll = (id: string) => { setOpen(false); document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' }) }
   const links = [['features', 'Features'], ['how', 'How it works'], ['capabilities', 'Capabilities'], ['data', 'Data format'], ['faq', 'FAQ']]
   return (
