@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, ArrowLeft, ArrowRight, Check, CheckCircle2, Eye, FileSpreadsheet, Loader2, Play, RefreshCw, Trash2, Upload, XCircle } from 'lucide-react'
 import { MODULES, useApp, type ModuleId } from '../store'
 import { SAMPLES, sampleCSV } from '../lib/samples'
-import { FIELDS, bytes, buildMatrix, fmt, mapRecords, parseCSV, validate, type Field } from '../lib/science'
+import { FIELDS, MAX_CSV_BYTES, bytes, buildMatrix, fmt, mapRecords, parseCSV, validate, type Field } from '../lib/science'
 import { Badge, Btn, Card, DataTable, Field as F, Logo, Modal, Segmented, Select, ThemeSwitch } from '../ui'
 
 const STEPS = ['upload', 'configure', 'validate', 'preview', 'analysis'] as const
@@ -92,23 +92,49 @@ function UploadStep() {
       notify('error', `Upload rejected: ${f.name} is not a CSV file.`)
       return
     }
+    if (f.size === 0) {
+      const msg = `"${f.name}" is empty. Upload a CSV file containing headers and data rows.`
+      setErr(msg)
+      notify('error', msg)
+      return
+    }
+    if (f.size > MAX_CSV_BYTES) {
+      const msg = `"${f.name}" is ${bytes(f.size)}, which exceeds the ${bytes(MAX_CSV_BYTES)} file size limit.`
+      setErr(msg)
+      notify('error', msg)
+      return
+    }
     setProg(0)
-    f.text().then((text) => {
-      let p = 0
-      const t = setInterval(() => {
-        p += 20
-        setProg(Math.min(p, 100))
-        if (p >= 100) {
-          clearInterval(t)
-          const e = loadFile(f.name, f.size, text)
+    f.text()
+      .then((text) => {
+        if (text.includes('\0')) {
           setProg(null)
-          if (e) {
-            setErr(e)
-            notify('error', e)
-          } else notify('upload', `Uploaded ${f.name} (${bytes(f.size)}).`)
+          const msg = `"${f.name}" appears to contain binary NUL bytes and is not a valid text CSV file.`
+          setErr(msg)
+          notify('error', msg)
+          return
         }
-      }, 90)
-    })
+        let p = 0
+        const t = setInterval(() => {
+          p += 20
+          setProg(Math.min(p, 100))
+          if (p >= 100) {
+            clearInterval(t)
+            const e = loadFile(f.name, f.size, text)
+            setProg(null)
+            if (e) {
+              setErr(e)
+              notify('error', e)
+            } else notify('upload', `Uploaded ${f.name} (${bytes(f.size)}).`)
+          }
+        }, 90)
+      })
+      .catch((error: unknown) => {
+        setProg(null)
+        const msg = error instanceof Error ? `Could not read "${f.name}": ${error.message}` : `Could not read "${f.name}".`
+        setErr(msg)
+        notify('error', msg)
+      })
   }
   const previewRaw = useMemo(() => (prev ? parseCSV(sampleCSV(SAMPLES.find((s) => s.key === prev)!)) : null), [prev])
   const sampleStats = useMemo(
@@ -129,7 +155,7 @@ function UploadStep() {
         <Card lift={false} className="p-6">
           <h2 className="text-lg font-bold">Option A — Upload your dataset</h2>
           <p className="sci mt-1 text-sm text-muted">Supported format: <b>.csv</b> with a header row, long format. Raw FASTQ sequencing files are not supported.</p>
-          <div onDragOver={(e) => { e.preventDefault(); setDrag(true) }} onDragLeave={() => setDrag(false)} onDrop={(e) => { e.preventDefault(); setDrag(false); const f = e.dataTransfer.files[0]; if (f) readFile(f) }} className={`glow mt-4 rounded-2xl border-2 border-dashed p-8 text-center transition-all ${drag ? 'scale-[1.02] border-cyan bg-cyan/10' : 'border-line'}`}>
+          <div onDragOver={(e) => { e.preventDefault(); setDrag(true) }} onDragLeave={() => setDrag(false)} onDrop={(e) => { e.preventDefault(); setDrag(false); const f = e.dataTransfer.files[0]; if (f) readFile(f) }} className={`mt-4 rounded-2xl border-2 border-dashed p-8 text-center transition-all ${drag ? 'scale-[1.02] border-cyan bg-cyan/10' : 'border-line'}`}>
             <Upload className="mx-auto mb-3 text-cyan" size={34} />
             <p className="font-semibold">Drag and drop a CSV file here</p>
             <p className="mt-1 text-xs text-muted">or</p>
@@ -137,7 +163,7 @@ function UploadStep() {
             <input ref={input} type="file" accept=".csv,text/csv" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) readFile(f); e.target.value = '' }} />
           </div>
           {prog !== null && (
-            <div className="mt-4"><div className="mb-1 flex justify-between text-xs"><span className="flex items-center gap-1"><Loader2 size={13} className="animate-spin" /> Reading file…</span><span className="mono">{prog}%</span></div><div className="h-2 overflow-hidden rounded-full bg-line"><i className="block h-full rounded-full bg-gradient-to-r from-brand to-cyan transition-all" style={{ width: prog + '%' }} /></div></div>
+            <div className="mt-4"><div className="mb-1 flex justify-between text-xs"><span className="flex items-center gap-1"><Loader2 size={13} className="animate-spin" /> Reading file…</span><span className="mono">{prog}%</span></div><div className="h-2 overflow-hidden rounded-full bg-line"><i className="block h-full rounded-full bg-[linear-gradient(90deg,#4285f4,#ea4335,#fbbc05,#34a853)] transition-all" style={{ width: prog + '%' }} /></div></div>
           )}
           {err && <p role="alert" className="mt-4 flex gap-2 rounded-xl border border-bad/40 bg-bad/10 p-3 text-sm text-bad"><XCircle size={16} className="mt-0.5 shrink-0" />{err}</p>}
           {fromUpload && prog === null && draft && (
@@ -156,7 +182,7 @@ function UploadStep() {
           <p className="sci mt-1 text-sm text-muted">All samples are <b>illustrative demo datasets</b> generated for this prototype, not real study data.</p>
           <div className="mt-4 space-y-3">
             {sampleStats.map(({ s, size, samples, features }) => (
-              <div key={s.key} className={`glow rounded-xl border p-4 transition ${draft?.sampleKey === s.key ? 'border-cyan/60 bg-cyan/10' : 'border-line'}`}>
+              <div key={s.key} className={`rounded-xl border p-4 transition ${draft?.sampleKey === s.key ? 'border-cyan/60 bg-cyan/10' : 'border-line'}`}>
                 <div className="flex flex-wrap items-start justify-between gap-2"><h3 className="font-bold">{s.name}</h3><Badge tone="violet">Demo</Badge></div>
                 <p className="sci mt-1 text-xs text-muted">{s.description}</p>
                 <div className="mono mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted"><span>{samples} samples</span><span>{features} features</span><span>{bytes(size)}</span></div>
@@ -204,7 +230,7 @@ function Configure({ analysis }: { analysis: An }) {
                 <div>
                   <Select value={draft.mapping[f.key] ?? ''} onChange={(v) => setMap(f.key, v)} options={[{ value: '', label: f.required ? '— select column —' : '— not mapped —' }, ...hs.map((h) => ({ value: h, label: h }))]} />
                   {f.required && !draft.mapping[f.key] && <p className="mt-1 text-xs text-bad">Select a column for this required field.</p>}
-                  {draft.mapping[f.key] && dupCols.includes(draft.mapping[f.key]!) && <p className="mt-1 text-xs text-warn">This column is mapped to more than one field.</p>}
+                  {draft.mapping[f.key] && dupCols.includes(draft.mapping[f.key]!) && <p className="mt-1 text-xs text-bad">This column is mapped to more than one field.</p>}
                 </div>
               </div>
             ))}
@@ -222,7 +248,21 @@ function Configure({ analysis }: { analysis: An }) {
           </Card>
         </div>
       </div>
-      <Nav back={() => go('/new/upload')} next={() => { setDraft({ maxStep: Math.max(draft.maxStep, 2) }); go('/new/validate') }} disabled={missing.length > 0 || !draft.name.trim()} note={missing.length ? `Map required: ${missing.map((m) => m.key).join(', ')}` : !draft.name.trim() ? 'Enter a dataset name' : undefined} nextLabel="Continue to validation" />
+      <Nav
+        back={() => go('/new/upload')}
+        next={() => { setDraft({ maxStep: Math.max(draft.maxStep, 2) }); go('/new/validate') }}
+        disabled={missing.length > 0 || dupCols.length > 0 || !draft.name.trim()}
+        note={
+          missing.length
+            ? `Map required: ${missing.map((m) => m.key).join(', ')}`
+            : dupCols.length
+              ? `Resolve duplicate column mapping: ${[...new Set(dupCols)].join(', ')}`
+              : !draft.name.trim()
+                ? 'Enter a dataset name'
+                : undefined
+        }
+        nextLabel="Continue to validation"
+      />
     </>
   )
 }
@@ -230,6 +270,7 @@ function Configure({ analysis }: { analysis: An }) {
 function Validate({ analysis }: { analysis: An }) {
   const { draft, setDraft, go, notify } = useApp()
   const [open, setOpen] = useState<string | null>(null)
+  const recByRow = useMemo(() => new Map(analysis.recs.map((r) => [r.row, r])), [analysis.recs])
   if (!draft) return null
   const errs = analysis.checks.filter((c) => c.status === 'error')
   const warns = analysis.checks.filter((c) => c.status === 'warn')
@@ -259,7 +300,26 @@ function Validate({ analysis }: { analysis: An }) {
                   </div>
                 )}
                 {open === c.id && (
-                  <div className="fade mt-3 max-h-64 overflow-auto rounded-xl border border-line"><table className="tbl mono w-full text-xs"><thead><tr><th>CSV row</th><th>sample_id</th><th>feature_id</th><th>abundance</th><th>group</th></tr></thead><tbody>{c.rows.slice(0, 50).map((n) => { const r = analysis.recs[n - 2]; return <tr key={n}><td>{n}</td><td>{r.sample || '∅'}</td><td>{r.feature || '∅'}</td><td>{r.abRaw || '∅'}</td><td>{r.group || '∅'}</td></tr> })}</tbody></table>{c.rows.length > 50 && <p className="p-2 text-xs text-muted">Showing first 50 of {c.rows.length}.</p>}</div>
+                  <div className="fade mt-3 max-h-64 overflow-auto rounded-xl border border-line">
+                    <table className="tbl mono w-full text-xs">
+                      <thead><tr><th>CSV row</th><th>sample_id</th><th>feature_id</th><th>abundance</th><th>group</th></tr></thead>
+                      <tbody>
+                        {c.rows.slice(0, 50).map((n) => {
+                          const r = recByRow.get(n)
+                          return (
+                            <tr key={n}>
+                              <td>{n}</td>
+                              <td>{r?.sample || '∅'}</td>
+                              <td>{r?.feature || '∅'}</td>
+                              <td>{r?.abRaw || '∅'}</td>
+                              <td>{r?.group || '∅'}</td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                    {c.rows.length > 50 && <p className="p-2 text-xs text-muted">Showing first 50 of {c.rows.length}.</p>}
+                  </div>
                 )}
               </div>
             </div>
@@ -319,23 +379,55 @@ function Preview({ analysis }: { analysis: An }) {
 function Analyse({ analysis }: { analysis: An }) {
   const { draft, setDraft, go, commit, runModules, notify, datasets } = useApp()
   const [run, setRun] = useState<{ i: number; id?: string } | null>(null)
+  const [saving, setSaving] = useState(false)
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const navTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current)
+      if (navTimerRef.current) clearTimeout(navTimerRef.current)
+    }
+  }, [])
+
   if (!draft) return null
   const mods = draft.modules
+  const draftName = draft.name
   const lineage = analysis.M.meta.some((m) => m.lineage)
   const toggle = (id: ModuleId) => setDraft({ modules: mods.includes(id) ? mods.filter((m) => m !== id) : [...mods, id] })
-  const start = () => {
-    const id = commit()
-    if (!id) return notify('error', 'Dataset could not be loaded because validation has errors.')
+  const start = async () => {
+    if (saving || run) return
+    setSaving(true)
+    let id: string | null = null
+    try {
+      id = await commit()
+    } finally {
+      setSaving(false)
+    }
+    if (!id) {
+      notify('error', 'Dataset could not be saved or validation has errors.')
+      return
+    }
     setRun({ i: 0, id })
     let i = 0
-    const t = setInterval(() => {
+    timerRef.current = setInterval(async () => {
       i++
       setRun({ i, id })
       if (i >= mods.length) {
-        clearInterval(t)
-        runModules(id, mods)
-        notify('analysis', `Analysis completed for ${draft.name}: ${mods.length} module(s).`, id)
-        setTimeout(() => { setDraft(null); go('/app/overview') }, 600)
+        if (timerRef.current) {
+          clearInterval(timerRef.current)
+          timerRef.current = null
+        }
+        const ok = await runModules(id!, mods)
+        if (ok) {
+          notify('analysis', `Analysis completed for ${draftName}: ${mods.length} module(s).`, id)
+          navTimerRef.current = setTimeout(() => {
+            setDraft(null)
+            go('/app/overview')
+          }, 600)
+        } else {
+          setRun(null)
+        }
       }
     }, 650)
   }
@@ -348,7 +440,7 @@ function Analyse({ analysis }: { analysis: An }) {
         {MODULES.map((m) => {
           const on = mods.includes(m.id)
           return (
-            <Card key={m.id} onClick={() => !run && toggle(m.id)} className={`cursor-pointer p-5 ${on ? '!border-cyan/60' : ''}`}>
+            <Card key={m.id} onClick={() => !run && !saving && toggle(m.id)} className={`cursor-pointer p-5 ${on ? '!border-cyan/60' : ''}`}>
               <div className="flex items-start justify-between gap-2"><h3 className="font-bold">{m.label}</h3><span className={`grid h-6 w-6 shrink-0 place-items-center rounded-md border ${on ? 'border-transparent bg-gradient-to-br from-brand to-cyan text-[#04101f]' : 'border-line'}`}>{on && <Check size={14} />}</span></div>
               <p className="sci mt-2 text-sm text-muted">{m.desc}</p>
               <div className="mt-3 flex flex-wrap gap-2"><Badge tone={m.status === 'Implemented' ? 'ok' : 'warn'}>{m.status}</Badge>{m.id === 'taxonomy' && !lineage && <Badge tone="warn">No lineage column</Badge>}</div>
@@ -362,10 +454,10 @@ function Analyse({ analysis }: { analysis: An }) {
           <ul className="space-y-2 text-sm">
             {mods.map((m, i) => <li key={m} className="flex items-center gap-2">{i < run.i ? <CheckCircle2 size={16} className="text-ok" /> : i === run.i ? <Loader2 size={16} className="animate-spin text-cyan" /> : <span className="h-4 w-4 rounded-full border border-line" />}<span className={i > run.i ? 'text-faint' : ''}>{MODULES.find((x) => x.id === m)!.label}</span></li>)}
           </ul>
-          <div className="mt-4 h-2 overflow-hidden rounded-full bg-line"><i className="block h-full rounded-full bg-gradient-to-r from-brand to-cyan transition-all duration-500" style={{ width: (run.i / mods.length) * 100 + '%' }} /></div>
+          <div className="mt-4 h-2 overflow-hidden rounded-full bg-line"><i className="block h-full rounded-full bg-[linear-gradient(90deg,#4285f4,#ea4335,#fbbc05,#34a853)] transition-all duration-500" style={{ width: (run.i / mods.length) * 100 + '%' }} /></div>
         </Card>
       )}
-      <Nav back={() => go('/new/preview')} next={start} nextLabel="Run Analysis" disabled={!mods.length || !!run} note={!mods.length ? 'Select at least one analysis' : undefined} />
+      <Nav back={() => go('/new/preview')} next={() => void start()} nextLabel={saving ? 'Saving dataset...' : 'Run Analysis'} disabled={!mods.length || !!run || saving} note={!mods.length ? 'Select at least one analysis' : undefined} />
       <span hidden><Play /></span>
     </>
   )

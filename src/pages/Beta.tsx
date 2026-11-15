@@ -3,7 +3,7 @@ import { useApp } from '../store'
 import { Heatmap, Scatter } from '../charts'
 import { Card, DataTable, PageHeader } from '../ui'
 import { ChartCard, Filters, Gate, Note, useData } from './common'
-import { fmt, pcoa } from '../lib/science'
+import { MAX_PCOA_SAMPLES, fmt, pcoa } from '../lib/science'
 
 export function Beta() {
   return (
@@ -48,7 +48,11 @@ function BetaInner() {
           {pc ? (
             <Scatter title="PCoA of Bray-Curtis dissimilarity" xLabel={`PCoA 1 (${(pc.explained[0] * 100).toFixed(1)}% of positive eigenvalue sum)`} yLabel={`PCoA 2 (${(pc.explained[1] * 100).toFixed(1)}%)`} points={ix.map((i, k) => ({ x: pc.coords[k][0], y: pc.coords[k][1], label: M.samples[i], group: M.groupOf[M.samples[i]], color: colorOf(M.groupOf[M.samples[i]]) }))} legend={d.groups.map((g) => ({ label: g, color: colorOf(g) }))} />
           ) : (
-            <Note tone="warn">PCoA needs at least three samples with non-degenerate distances. No coordinates are shown.</Note>
+            <Note tone="warn">
+              {ix.length > MAX_PCOA_SAMPLES
+                ? `PCoA ordination is capped at ${MAX_PCOA_SAMPLES} samples in the browser (currently ${ix.length} selected) to keep Jacobi decomposition responsive. Use the group filter or inspect the pairwise Bray-Curtis heatmap.`
+                : 'PCoA needs at least three samples with non-degenerate distances and at least two positive eigenvalues. No coordinates are shown.'}
+            </Note>
           )}
         </ChartCard>
       </div>

@@ -202,9 +202,23 @@ export function Bars({ title, items, xLabel, yLabel, horizontal, fmtV, errs }: {
 export function Heatmap({ title, rows, cols, values, xLabel, yLabel, legend, fmtV, domain, minCell = 22 }: { title: string; rows: string[]; cols: string[]; values: number[][]; xLabel: string; yLabel: string; legend: string; fmtV?: (v: number) => string; domain?: [number, number]; minCell?: number }) {
   const c = useC()
   const f = fmtV ?? ((v: number) => v.toFixed(3))
-  const flat = values.flat()
-  const lo = domain?.[0] ?? Math.min(...flat)
-  const hi = domain?.[1] ?? Math.max(...flat)
+  if (!rows.length || !cols.length || !values.length) {
+    return <div className="py-8 text-center text-sm text-muted">No heatmap data available.</div>
+  }
+  let minVal = Infinity
+  let maxVal = -Infinity
+  for (const row of values) {
+    for (const v of row) {
+      if (Number.isFinite(v)) {
+        if (v < minVal) minVal = v
+        if (v > maxVal) maxVal = v
+      }
+    }
+  }
+  if (!Number.isFinite(minVal)) minVal = 0
+  if (!Number.isFinite(maxVal)) maxVal = 1
+  const lo = domain?.[0] ?? minVal
+  const hi = domain?.[1] ?? maxVal
   const l = 120
   const t = 12
   const b = 100
@@ -257,7 +271,8 @@ export function Heatmap({ title, rows, cols, values, xLabel, yLabel, legend, fmt
 /* ---------- box & violin ---------- */
 type G = { name: string; color: string; values: number[]; labels?: string[] }
 function gAxes(groups: G[], yLabel: string, fmtV?: (v: number) => string, pad = true) {
-  const all = groups.flatMap((g) => g.values)
+  const all = groups.flatMap((g) => g.values).filter(Number.isFinite)
+  if (!all.length) return null
   let lo = Math.min(...all)
   let hi = Math.max(...all)
   if (pad) {
@@ -280,14 +295,18 @@ function gAxes(groups: G[], yLabel: string, fmtV?: (v: number) => string, pad = 
 export function BoxPlot({ title, groups, yLabel, xLabel = 'Sample group' }: { title: string; groups: G[]; yLabel: string; xLabel?: string }) {
   const c = useC()
   const A = gAxes(groups, yLabel)
+  if (!A) return <div className="py-8 text-center text-sm text-muted">No finite values available for this metric.</div>
   const { W, H, l, r, t, b, yt, ys, bw } = A
   return (
     <div>
       <Frame W={W} H={H} title={title}>
         <Axes {...{ W, H, l, r, t, b, yt, ys, xLabel, yLabel }} />
         {groups.map((g, i) => {
-          const q = [0, 0.25, 0.5, 0.75, 1].map((p) => quantile(g.values, p))
           const cx = l + i * bw + bw / 2
+          if (!g.values.length) {
+            return <text key={g.name} x={cx} y={H - b + 18} textAnchor="middle" fontSize="11" fill={c.text}>{short(g.name, 18)}</text>
+          }
+          const q = [0, 0.25, 0.5, 0.75, 1].map((p) => quantile(g.values, p))
           const w = Math.min(70, bw * 0.4)
           return (
             <g key={g.name} onMouseMove={(e) => tip.show(e, <div><b>{g.name}</b> (n={g.values.length})<div className="mono">min {nf(q[0])} · Q1 {nf(q[1])}<br />median {nf(q[2])}<br />Q3 {nf(q[3])} · max {nf(q[4])}</div></div>)} onMouseLeave={tip.hide}>
@@ -307,6 +326,7 @@ export function BoxPlot({ title, groups, yLabel, xLabel = 'Sample group' }: { ti
 export function Violin({ title, groups, yLabel, xLabel = 'Sample group' }: { title: string; groups: G[]; yLabel: string; xLabel?: string }) {
   const c = useC()
   const A = gAxes(groups, yLabel)
+  if (!A) return <div className="py-8 text-center text-sm text-muted">No finite values available for this metric.</div>
   const { W, H, l, r, t, b, yt, ys, bw } = A
   return (
     <div>
@@ -315,6 +335,9 @@ export function Violin({ title, groups, yLabel, xLabel = 'Sample group' }: { tit
         {groups.map((g, i) => {
           const cx = l + i * bw + bw / 2
           const n = g.values.length
+          if (!n) {
+            return <text key={g.name} x={cx} y={H - b + 18} textAnchor="middle" fontSize="11" fill={c.text}>{short(g.name, 18)}</text>
+          }
           const sd = Math.sqrt(g.values.reduce((a, v) => a + (v - g.values.reduce((x, y) => x + y, 0) / n) ** 2, 0) / Math.max(1, n - 1))
           const bwid = (1.06 * (sd || (A.hi - A.lo) / 10) * Math.pow(n, -0.2)) || 0.1
           const lo = A.yt[0]

@@ -7,13 +7,14 @@ import { bytes, toCSV } from '../lib/science'
 const aStatus = (d: Dataset) => (Object.keys(d.done).length === 0 ? 'Not analysed' : Object.keys(d.done).length === MODULES.length ? 'Complete' : 'Partial')
 
 export default function Datasets() {
-  const { datasets, active, setActive, go, draftFromDataset, rename, remove, setDraft, notify } = useApp()
+  const { datasets, active, setActive, go, draftFromDataset, rename, remove, setDraft, notify, user } = useApp()
   const [type, setType] = useState('all')
   const [st, setSt] = useState('all')
   const [prev, setPrev] = useState<Dataset | null>(null)
   const [ren, setRen] = useState<Dataset | null>(null)
   const [name, setName] = useState('')
   const [del, setDel] = useState<Dataset | null>(null)
+  const [busy, setBusy] = useState(false)
   const [sel, setSel] = useState<string>(active?.id ?? '')
   const rows = datasets.filter((d) => (type === 'all' || d.type === type) && (st === 'all' || aStatus(d) === st))
   const detail = datasets.find((d) => d.id === sel) ?? active
@@ -23,7 +24,7 @@ export default function Datasets() {
   }
   return (
     <div>
-      <PageHeader title="Datasets" desc="Manage every dataset loaded in this session. Each dataset keeps its own results and history." actions={<><Btn variant="primary" onClick={() => { setDraft(null); go('/new/upload') }}><Upload size={15} /> Upload New Dataset</Btn><Btn onClick={() => { setDraft(null); go('/new/upload') }}><Plus size={15} /> Use Sample Dataset</Btn></>} />
+      <PageHeader title="Datasets" desc={user?.guest ? 'Manage datasets loaded in this local guest session. Each dataset keeps its own results and history.' : 'Manage your synchronized datasets. Each dataset keeps its own results and history.'} actions={<><Btn variant="primary" onClick={() => { setDraft(null); go('/new/upload') }}><Upload size={15} /> Upload New Dataset</Btn><Btn onClick={() => { setDraft(null); go('/new/upload') }}><Plus size={15} /> Use Sample Dataset</Btn></>} />
       <Card lift={false} className="p-5">
         <DataTable
           rows={rows}
@@ -58,7 +59,11 @@ export default function Datasets() {
             <dl className="sci grid grid-cols-[130px_1fr] gap-y-2 text-sm">
               {[['Name', detail.name], ['ID', detail.id], ['File', detail.fileName], ['Size', bytes(detail.size)], ['Rows', detail.recs.length.toLocaleString()], ['Samples / features', `${detail.M.samples.length} / ${detail.M.features.length}`], ['Description', detail.description || '—']].map(([k, v]) => <Fragment key={k}><dt className="text-muted">{k}</dt><dd className="mono break-words text-[0.82rem]">{v}</dd></Fragment>)}
             </dl>
-            <p className="mt-3 text-xs text-faint">Kept in this browser session only; reloading the page clears all datasets.</p>
+            <p className="mt-3 text-xs text-faint">
+              {user?.guest
+                ? 'Kept in this browser session only; reloading the page clears guest datasets.'
+                : 'Stored in your Supabase account with Row Level Security.'}
+            </p>
           </Card>
           <Card lift={false} className="p-5">
             <h3 className="mb-3 font-bold">Dataset history</h3>
@@ -69,13 +74,59 @@ export default function Datasets() {
       <Modal wide open={!!prev} onClose={() => setPrev(null)} title={`Preview — ${prev?.name ?? ''}`}>
         {prev && <DataTable pageSize={8} rows={prev.raw.rows} cols={prev.raw.headers.map((h, i) => ({ key: h, label: h, mono: true, value: (r: string[]) => r[i] }))} />}
       </Modal>
-      <Modal open={!!ren} onClose={() => setRen(null)} title="Rename dataset">
-        <input className="input" value={name} onChange={(e) => setName(e.target.value)} aria-label="Dataset name" autoFocus />
-        <div className="mt-4 flex justify-end gap-2"><Btn onClick={() => setRen(null)}>Cancel</Btn><Btn variant="primary" disabled={!name.trim()} onClick={() => { rename(ren!.id, name.trim()); setRen(null) }}>Save</Btn></div>
+      <Modal open={!!ren} onClose={() => !busy && setRen(null)} title="Rename dataset">
+        <input className="input" value={name} onChange={(e) => setName(e.target.value)} aria-label="Dataset name" autoFocus disabled={busy} />
+        <div className="mt-4 flex justify-end gap-2">
+          <Btn onClick={() => setRen(null)} disabled={busy}>Cancel</Btn>
+          <Btn
+            variant="primary"
+            disabled={!name.trim() || busy}
+            onClick={async () => {
+              if (!ren) return
+              setBusy(true)
+              try {
+                const ok = await rename(ren.id, name.trim())
+                if (ok) {
+                  notify('info', `Renamed dataset to "${name.trim()}".`, ren.id)
+                  setRen(null)
+                }
+              } finally {
+                setBusy(false)
+              }
+            }}
+          >
+            {busy ? 'Saving...' : 'Save'}
+          </Btn>
+        </div>
       </Modal>
-      <Modal open={!!del} onClose={() => setDel(null)} title="Delete dataset?">
-        <p className="sci text-sm text-muted">This permanently removes <b>{del?.name}</b>, its analysis results and its reports from this session. This cannot be undone.</p>
-        <div className="mt-4 flex justify-end gap-2"><Btn onClick={() => setDel(null)}>Cancel</Btn><Btn variant="danger" onClick={() => { notify('info', `Deleted ${del!.name}.`); remove(del!.id); setDel(null) }}><Trash2 size={14} /> Delete</Btn></div>
+      <Modal open={!!del} onClose={() => !busy && setDel(null)} title="Delete dataset?">
+        <p className="sci text-sm text-muted">
+          This permanently removes <b>{del?.name}</b>, its analysis results and its reports
+          {user?.guest ? ' from this session' : ' from your account'}. This cannot be undone.
+        </p>
+        <div className="mt-4 flex justify-end gap-2">
+          <Btn onClick={() => setDel(null)} disabled={busy}>Cancel</Btn>
+          <Btn
+            variant="danger"
+            disabled={busy}
+            onClick={async () => {
+              if (!del) return
+              const target = del
+              setBusy(true)
+              try {
+                const ok = await remove(target.id)
+                if (ok) {
+                  notify('info', `Deleted ${target.name}.`)
+                  setDel(null)
+                }
+              } finally {
+                setBusy(false)
+              }
+            }}
+          >
+            <Trash2 size={14} /> {busy ? 'Deleting...' : 'Delete'}
+          </Btn>
+        </div>
       </Modal>
     </div>
   )

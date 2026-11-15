@@ -37,7 +37,14 @@ function TaxInner() {
     const root: Node = { id: '', name: 'root', depth: -1, rank: '', children: [], feats: [] }
     const byId = new Map<string, Node>()
     M.meta.forEach((m, j) => {
-      const path = m.lineage ? m.lineage.split(';').map((x) => x.trim()).filter(Boolean) : [m.organism || 'Unknown']
+      let path: string[]
+      if (m.lineage) {
+        const segs = m.lineage.split(';').map((x) => x.trim())
+        while (segs.length && !segs[segs.length - 1]) segs.pop()
+        path = segs.length ? segs.map((s) => s || 'Unassigned') : [m.organism || 'Unknown']
+      } else {
+        path = [m.organism || 'Unknown']
+      }
       let cur = root
       path.forEach((p, depth) => {
         const id = path.slice(0, depth + 1).join('|')
@@ -177,7 +184,11 @@ function CmpInner() {
   const [b, setB] = useState(opts[1] ?? opts[0])
   useEffect(() => { setA(opts[0]); setB(opts[1] ?? opts[0]) }, [by]) // eslint-disable-line react-hooks/exhaustive-deps
   const members = (v: string) => M.samples.map((_s, i) => i).filter((i) => (by === 'groups' ? M.groupOf[M.samples[i]] === v : M.samples[i] === v))
-  const prof = (X: number[][], v: string) => { const m = members(v); return X[0].map((_x, j) => m.reduce((s, i) => s + X[i][j], 0) / Math.max(1, m.length)) }
+  const prof = (X: number[][], v: string) => {
+    const row = X[0] ?? []
+    const m = members(v)
+    return row.map((_x, j) => m.reduce((s, i) => s + X[i][j], 0) / Math.max(1, m.length))
+  }
   const pa = prof(d.R, a)
   const pb = prof(d.R, b)
   const A = useMemo(() => aggregate(M, level), [M, level])

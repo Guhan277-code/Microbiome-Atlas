@@ -29,7 +29,7 @@ export function TooltipLayer() {
 export function Logo({ size = 28 }: { size?: number }) {
   return (
     <span className="inline-flex items-center gap-2 font-bold tracking-tight">
-      <span className="grid place-items-center rounded-xl bg-gradient-to-br from-brand via-cyan to-violet text-[#04101f] shadow-[0_6px_18px_-4px_rgba(0,212,255,.6)]" style={{ width: size + 8, height: size + 8 }}>
+      <span className="grid place-items-center rounded-xl bg-[linear-gradient(135deg,#4285f4,#ea4335,#fbbc05,#34a853)] text-white shadow-[0_6px_18px_-4px_rgba(66,133,244,0.45)]" style={{ width: size + 8, height: size + 8 }}>
         <Hexagon size={size - 6} strokeWidth={2.4} />
       </span>
       <span>Microbiome Atlas</span>
@@ -50,7 +50,7 @@ export function ThemeSwitch() {
 
 export function Btn({ variant = 'ghost', size, className = '', children, ...p }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'ghost' | 'danger'; size?: 'sm' | 'icon' }) {
   return (
-    <button {...p} className={`btn glow ${variant === 'primary' ? 'btn-primary' : variant === 'danger' ? 'btn-danger' : ''} ${size === 'sm' ? 'btn-sm' : size === 'icon' ? 'btn-icon' : ''} ${className}`}>
+    <button {...p} className={`btn ${variant === 'primary' ? 'btn-primary' : variant === 'danger' ? 'btn-danger' : ''} ${size === 'sm' ? 'btn-sm' : size === 'icon' ? 'btn-icon' : ''} ${className}`}>
       {children}
     </button>
   )
@@ -58,7 +58,7 @@ export function Btn({ variant = 'ghost', size, className = '', children, ...p }:
 
 export function Card({ children, className = '', lift = true, style, onClick }: { children: ReactNode; className?: string; lift?: boolean; style?: CSSProperties; onClick?: () => void }) {
   return (
-    <div onClick={onClick} style={style} className={`card glow ${lift ? 'lift' : ''} ${className}`}>
+    <div onClick={onClick} style={style} className={`card ${lift ? 'lift' : ''} ${className}`}>
       <div className="relative z-[1]">{children}</div>
     </div>
   )
@@ -164,7 +164,7 @@ export function Tabs<T extends string>({ value, onChange, tabs }: { value: T; on
   return (
     <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-2" role="tablist">
       {tabs.map((t) => (
-        <button key={t.id} role="tab" aria-selected={value === t.id} onClick={() => onChange(t.id)} className={`glow relative shrink-0 overflow-hidden rounded-xl border px-3.5 py-2 text-sm font-semibold transition-all ${value === t.id ? 'border-brand/60 bg-brand/15 text-ink shadow-[0_6px_20px_-8px_rgba(66,133,244,.8)]' : 'border-transparent text-muted hover:text-ink'}`}>
+        <button key={t.id} role="tab" aria-selected={value === t.id} onClick={() => onChange(t.id)} className={`relative shrink-0 overflow-hidden rounded-xl border px-3.5 py-2 text-sm font-semibold transition-all ${value === t.id ? 'border-brand/60 bg-brand/15 text-ink shadow-[0_6px_20px_-8px_rgba(66,133,244,.8)]' : 'border-transparent text-muted hover:text-ink'}`}>
           <span className="relative z-[1]">{t.label}</span>
         </button>
       ))}

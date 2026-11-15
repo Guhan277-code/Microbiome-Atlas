@@ -120,7 +120,7 @@ function AlphaInner() {
         <Card lift={false} className="p-5">
           <h3 className="mb-3 font-bold">Interpretation</h3>
           <ul className="sci list-disc space-y-2 pl-5 text-sm">
-            {gs.map((g) => <li key={g.name}>{g.name}: mean {label} = <b className="mono">{fmt(g.values.reduce((a, b) => a + b, 0) / Math.max(1, g.values.length), 3)}</b> (n = {g.values.length}).</li>)}
+            {gs.map((g) => <li key={g.name}>{g.name}: mean {label} = <b className="mono">{fmt(g.values.length ? g.values.reduce((a, b) => a + b, 0) / g.values.length : null, 3)}</b> (n = {g.values.length}).</li>)}
             <li>These are descriptive summaries. No statistical test was run, so no group difference is claimed.</li>
             <li>Greater diversity does <b>not</b> automatically mean a healthier or better microbiome; interpretation depends on the habitat and study design.</li>
             <li>Counts are not rarefied, so observed features and Shannon can be influenced by sequencing depth.</li>

@@ -39,7 +39,7 @@ function DatasetSwitcher() {
   const unused = SAMPLES.filter((s) => !datasets.some((d) => d.type === 'Sample' && d.fileName === `${s.key}_demo.csv`))
   return (
     <div ref={ref} className="relative min-w-0">
-      <button onClick={() => setOpen(!open)} aria-expanded={open} aria-haspopup="listbox" className="glow card flex max-w-full items-center gap-3 !rounded-2xl px-3 py-1.5 text-left">
+      <button onClick={() => setOpen(!open)} aria-expanded={open} aria-haspopup="listbox" className="card flex max-w-full items-center gap-3 !rounded-2xl px-3 py-1.5 text-left">
         <span className="relative z-[1] min-w-0">
           <span className="block truncate text-sm font-bold leading-tight">{active.name}</span>
           <span className="mono block truncate text-[0.68rem] leading-tight text-muted">{active.id} · {active.M.samples.length} samples · {active.M.features.length} features</span>
@@ -165,7 +165,7 @@ export default function Shell({ page, children }: { page: string; children: Reac
       {NAV.map((n) => {
         const on = page === n.id
         return (
-          <button key={n.id} onClick={() => go('/app/' + n.id)} aria-current={on ? 'page' : undefined} title={n.label} className={`glow relative flex items-center gap-3 overflow-hidden rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition-all ${on ? 'bg-gradient-to-r from-brand/30 to-cyan/10 text-ink shadow-[inset_0_0_0_1px_rgba(0,212,255,.35),0_8px_22px_-10px_rgba(66,133,244,.8)]' : 'text-muted hover:translate-x-0.5 hover:text-ink'}`}>
+          <button key={n.id} onClick={() => go('/app/' + n.id)} aria-current={on ? 'page' : undefined} title={n.label} className={`relative flex items-center gap-3 overflow-hidden rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition-all ${on ? 'bg-gradient-to-r from-brand/30 to-cyan/10 text-ink shadow-[inset_0_0_0_1px_rgba(0,212,255,.35),0_8px_22px_-10px_rgba(66,133,244,.8)]' : 'text-muted hover:translate-x-0.5 hover:text-ink'}`}>
             <n.icon size={18} className={`relative z-[1] shrink-0 ${on ? 'text-cyan' : ''}`} />
             {!mini && <span className="relative z-[1] truncate">{n.label}</span>}
           </button>

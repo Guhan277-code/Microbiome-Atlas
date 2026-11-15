@@ -1,4 +1,4 @@
-import { toCSV } from './science'
+import { toCSV } from './science.ts'
 
 // genus, kingdom, phylum, class, order, family
 const POOL: Record<string, string[]> = {

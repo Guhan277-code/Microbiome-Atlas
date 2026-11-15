@@ -18,18 +18,30 @@ export const FIELDS: { key: Field; required: boolean; help: string }[] = [
 ]
 
 export const LEVELS = ['Kingdom', 'Phylum', 'Class', 'Order', 'Family', 'Genus', 'Species'] as const
+export const MAX_CSV_BYTES = 5 * 1024 * 1024
+export const MAX_CSV_ROWS = 50_000
+export const MAX_PCOA_SAMPLES = 150
 export type Mapping = Partial<Record<Field, string>>
 export interface RawTable {
   headers: string[]
   rows: string[][]
+  rowNumbers?: number[]
+  unclosedQuote?: boolean
+  mismatchedRows?: number[]
+  duplicateHeaders?: string[]
+  truncatedAtLimit?: boolean
 }
 
 export function parseCSV(text: string): RawTable {
-  const rows: string[][] = []
+  const records: { fields: string[]; line: number }[] = []
   let cur: string[] = []
   let f = ''
   let q = false
+  let lineNum = 1
+  let recordStartLine = 1
   const t = text.replace(/^\uFEFF/, '')
+  let truncatedAtLimit = false
+
   for (let i = 0; i < t.length; i++) {
     const c = t[i]
     if (q) {
@@ -38,25 +50,74 @@ export function parseCSV(text: string): RawTable {
           f += '"'
           i++
         } else q = false
-      } else f += c
-    } else if (c === '"') q = true
-    else if (c === ',') {
+      } else {
+        if (c === '\r' && t[i + 1] === '\n') {
+          f += '\n'
+          i++
+          lineNum++
+        } else if (c === '\n' || c === '\r') {
+          f += c
+          lineNum++
+        } else {
+          f += c
+        }
+      }
+    } else if (c === '"') {
+      q = true
+    } else if (c === ',') {
       cur.push(f)
       f = ''
     } else if (c === '\n' || c === '\r') {
       if (c === '\r' && t[i + 1] === '\n') i++
       cur.push(f)
       f = ''
-      if (cur.some((x) => x.trim() !== '') || cur.length > 1) rows.push(cur)
+      if (cur.some((x) => x.trim() !== '') || cur.length > 1) {
+        records.push({ fields: cur, line: recordStartLine })
+        if (records.length > MAX_CSV_ROWS + 1) {
+          truncatedAtLimit = true
+          cur = []
+          break
+        }
+      }
       cur = []
-    } else f += c
+      lineNum++
+      recordStartLine = lineNum
+    } else {
+      f += c
+    }
   }
-  if (f !== '' || cur.length) {
+  if (!truncatedAtLimit && (f !== '' || cur.length)) {
     cur.push(f)
-    if (cur.some((x) => x.trim() !== '')) rows.push(cur)
+    if (cur.some((x) => x.trim() !== '') || cur.length > 1) {
+      records.push({ fields: cur, line: recordStartLine })
+      if (records.length > MAX_CSV_ROWS + 1) {
+        truncatedAtLimit = true
+      }
+    }
   }
-  const headers = (rows.shift() ?? []).map((h) => h.trim())
-  return { headers, rows }
+
+  const headerRec = records.shift()
+  const headers = (headerRec?.fields ?? []).map((h) => h.trim())
+  const dataRecords = truncatedAtLimit ? records.slice(0, MAX_CSV_ROWS) : records
+  const headerCounts = new Map<string, number>()
+  for (const h of headers) {
+    if (!h) continue
+    headerCounts.set(h, (headerCounts.get(h) ?? 0) + 1)
+  }
+  const duplicateHeaders = [...headerCounts.entries()].filter(([, n]) => n > 1).map(([h]) => h)
+  const mismatchedRows = dataRecords
+    .filter((r) => r.fields.length !== headers.length)
+    .map((r) => r.line)
+
+  return {
+    headers,
+    rows: dataRecords.map((r) => r.fields),
+    rowNumbers: dataRecords.map((r) => r.line),
+    unclosedQuote: q,
+    mismatchedRows,
+    duplicateHeaders,
+    truncatedAtLimit,
+  }
 }
 
 const SYN: Record<Field, string[]> = {
@@ -101,7 +162,7 @@ export function mapRecords(raw: RawTable, m: Mapping): Rec[] {
     const abRaw = g(r, 'abundance')
     const n = abRaw === '' ? null : Number(abRaw)
     return {
-      row: i + 2,
+      row: raw.rowNumbers?.[i] ?? i + 2,
       sample: g(r, 'sample_id'),
       feature: g(r, 'feature_id'),
       organism: g(r, 'organism'),
@@ -145,6 +206,44 @@ export function validate(raw: RawTable, m: Mapping, recs: Rec[]): Check[] {
     explanation: missingCols.length ? `Not mapped: ${missingCols.map((f) => f.key).join(', ')}.` : 'All required fields are mapped to CSV columns.',
     action: missingCols.length ? 'Return to column configuration and map every required field.' : 'No action needed.',
   })
+
+  const colUse = new Map<string, Field[]>()
+  for (const f of FIELDS) {
+    const col = m[f.key]
+    if (col) {
+      const list = colUse.get(col) ?? []
+      list.push(f.key)
+      colUse.set(col, list)
+    }
+  }
+  const dupMappings = [...colUse.entries()].filter(([, fields]) => fields.length > 1)
+  out.push({
+    id: 'dupmap',
+    title: 'Distinct CSV column per field',
+    status: dupMappings.length ? 'error' : 'pass',
+    count: dupMappings.length,
+    rows: [],
+    explanation: dupMappings.length
+      ? `One CSV column is mapped to multiple fields: ${dupMappings.map(([c, fs]) => `${c} (${fs.join(', ')})`).join('; ')}.`
+      : 'Each mapped field references a distinct CSV column.',
+    action: dupMappings.length ? 'Return to column configuration and assign separate columns to each mapped field.' : 'No action needed.',
+  })
+
+  const formatIssues: string[] = []
+  if (raw.unclosedQuote) formatIssues.push('unclosed quote')
+  if ((raw.duplicateHeaders?.length ?? 0) > 0) formatIssues.push(`duplicate headers (${raw.duplicateHeaders!.join(', ')})`)
+  if ((raw.mismatchedRows?.length ?? 0) > 0) formatIssues.push(`${raw.mismatchedRows!.length} row(s) with wrong column count`)
+  if (raw.truncatedAtLimit) formatIssues.push(`exceeds ${MAX_CSV_ROWS.toLocaleString()} rows limit`)
+  out.push({
+    id: 'csvfmt',
+    title: 'Well-formed CSV structure',
+    status: formatIssues.length ? 'error' : 'pass',
+    count: (raw.mismatchedRows?.length ?? 0) || formatIssues.length,
+    rows: raw.mismatchedRows ?? [],
+    explanation: formatIssues.length ? `CSV parsing errors detected: ${formatIssues.join('; ')}.` : 'CSV quotes, headers, and column counts per row are valid.',
+    action: formatIssues.length ? 'Fix malformed quotes, duplicate headers, or misaligned columns in the CSV file and re-upload.' : 'No action needed.',
+  })
+
   if (raw.rows.length === 0) {
     out.push({ id: 'empty', title: 'Dataset contains rows', status: 'error', count: 0, rows: [], explanation: 'The CSV has a header but no data rows.', action: 'Upload a CSV with data rows.' })
   }
@@ -158,7 +257,7 @@ export function validate(raw: RawTable, m: Mapping, recs: Rec[]): Check[] {
     action: rows.length ? action : 'No action needed.',
   })
   const R = (f: (r: Rec) => boolean) => recs.filter(f).map((r) => r.row)
-  if (!missingCols.length) {
+  if (!missingCols.length && !dupMappings.length && raw.rows.length > 0) {
     out.push(mk('sid', 'Sample IDs present', R((r) => !r.sample), 'warn', 'Rows without a sample ID cannot be assigned to a community and are excluded from calculations.', 'Fill in sample IDs in the source file, or accept the exclusion.', 'Every row has a sample ID.'))
     out.push(mk('fid', 'Feature IDs present', R((r) => !r.feature), 'warn', 'Rows without a feature ID are excluded from calculations.', 'Provide feature IDs in the source file.', 'Every row has a feature ID.'))
     out.push(mk('org', 'Organism names present', R((r) => !r.organism), 'warn', 'Organism names are left blank; they are not inferred. These rows still count towards totals.', 'Add organism names in the source file.', 'Every row has an organism name.'))
@@ -168,14 +267,32 @@ export function validate(raw: RawTable, m: Mapping, recs: Rec[]): Check[] {
     out.push(mk('neg', 'No negative abundances', R((r) => r.abundance !== null && r.abundance < 0), 'error', 'Negative abundances are not valid for counts or proportions. This is a critical error.', 'Correct or remove the negative values in the source file and re-upload.', 'No negative abundance values.'))
     const seen = new Map<string, number>()
     const dups: number[] = []
+    const sampleGroups = new Map<string, string>()
+    const groupConflicts: number[] = []
+    const featureMeta = new Map<string, string>()
+    const featureConflicts: number[] = []
     for (const r of recs) {
-      if (!r.sample || !r.feature) continue
-      const k = r.sample + '\u0001' + r.feature
-      if (seen.has(k)) dups.push(r.row)
-      else seen.set(k, r.row)
+      if (r.sample && r.feature) {
+        const k = r.sample + '\u0001' + r.feature
+        if (seen.has(k)) dups.push(r.row)
+        else seen.set(k, r.row)
+      }
+      if (r.sample && r.group) {
+        const prevGroup = sampleGroups.get(r.sample)
+        if (!prevGroup) sampleGroups.set(r.sample, r.group)
+        else if (prevGroup !== r.group) groupConflicts.push(r.row)
+      }
+      if (r.feature && (r.organism || r.rank || r.lineage)) {
+        const sig = `${r.organism}\u0001${r.rank}\u0001${r.lineage}`
+        const prevSig = featureMeta.get(r.feature)
+        if (!prevSig) featureMeta.set(r.feature, sig)
+        else if (prevSig !== sig) featureConflicts.push(r.row)
+      }
     }
     out.push(mk('dup', 'Unique sample-feature combinations', dups, 'warn', 'Repeated sample/feature pairs were found. In calculations their abundances are summed; the original rows are not altered.', 'Check whether duplicates are technical replicates or errors.', 'Each sample-feature pair occurs once.'))
     out.push(mk('grp', 'Sample groups present', R((r) => !r.group), 'warn', 'Samples without a group appear as "Ungrouped" in group views.', 'Add the sample group in the source file.', 'Every row has a sample group.'))
+    out.push(mk('sgrp_conflict', 'Consistent sample group per sample', groupConflicts, 'warn', 'Multiple conflicting sample_group values appear for the same sample_id. The first non-empty group is kept.', 'Verify sample metadata and assign one group per sample_id.', 'Each sample belongs to a single group.'))
+    out.push(mk('fmeta_conflict', 'Consistent taxonomy per feature', featureConflicts, 'warn', 'Conflicting organism, rank, or lineage annotations appear for the same feature_id. The first annotation is used.', 'Standardize feature annotations per feature_id in the CSV.', 'Each feature_id has consistent taxonomy metadata.'))
     const M = buildMatrix(recs)
     out.push({
       id: 'zero',
@@ -186,11 +303,23 @@ export function validate(raw: RawTable, m: Mapping, recs: Rec[]): Check[] {
       explanation: M.zeroTotal.length ? `Samples with total abundance 0 (${M.zeroTotal.join(', ')}) cannot yield proportions and are excluded from diversity and composition calculations.` : 'Every sample has a positive total abundance.',
       action: M.zeroTotal.length ? 'Review whether these samples failed sequencing.' : 'No action needed.',
     })
+    out.push({
+      id: 'pos',
+      title: 'At least one non-zero sample',
+      status: M.samples.length === 0 ? 'error' : 'pass',
+      count: M.samples.length === 0 ? recs.length : 0,
+      rows: [],
+      explanation: M.samples.length === 0
+        ? 'No valid sample has a positive total abundance, so composition and diversity metrics cannot be computed.'
+        : `${M.samples.length} sample(s) have positive total abundance and are ready for analysis.`,
+      action: M.samples.length === 0 ? 'Provide at least one sample with valid positive numeric abundance.' : 'No action needed.',
+    })
     const pos = recs.filter((r) => r.abundance !== null && r.abundance > 0).map((r) => Math.log10(1 + r.abundance!))
     const q1 = quantile(pos, 0.25)
     const q3 = quantile(pos, 0.75)
-    const hi = q3 + 3 * (q3 - q1)
-    out.push(mk('unu', 'No unusual abundance values', pos.length > 8 ? R((r) => r.abundance !== null && r.abundance > 0 && Math.log10(1 + r.abundance) > hi) : [], 'warn', 'Values far above the typical range (log10 scale, 3×IQR rule) may be outliers or data-entry errors. They are kept unchanged.', 'Inspect these rows; keep them if they are biologically real.', 'No extreme outliers detected.'))
+    const iqr = q3 - q1
+    const hi = q3 + 3 * iqr
+    out.push(mk('unu', 'No unusual abundance values', pos.length > 8 && iqr > 0 ? R((r) => r.abundance !== null && r.abundance > 0 && Math.log10(1 + r.abundance) > hi) : [], 'warn', 'Values far above the typical range (log10 scale, 3×IQR rule) may be outliers or data-entry errors. They are kept unchanged.', 'Inspect these rows; keep them if they are biologically real.', 'No extreme outliers detected.'))
   }
   return out
 }
@@ -208,7 +337,7 @@ export function buildMatrix(recs: Rec[]): Matrix {
   const valid = recs.filter((r) => r.sample && r.feature && r.abundance !== null && r.abundance >= 0)
   const sIdx = new Map<string, number>()
   const fIdx = new Map<string, number>()
-  const groupOf: Record<string, string> = {}
+  const groupOf = Object.create(null) as Record<string, string>
   const meta: Matrix['meta'] = []
   for (const r of valid) {
     if (!sIdx.has(r.sample)) sIdx.set(r.sample, sIdx.size)
@@ -216,7 +345,10 @@ export function buildMatrix(recs: Rec[]): Matrix {
       fIdx.set(r.feature, fIdx.size)
       meta.push({ organism: r.organism || r.feature, rank: r.rank, lineage: r.lineage })
     }
-    if (!groupOf[r.sample] || groupOf[r.sample] === 'Ungrouped') groupOf[r.sample] = r.group || 'Ungrouped'
+    const existingGroup = groupOf[r.sample]
+    if (existingGroup === undefined || (existingGroup === 'Ungrouped' && r.group)) {
+      groupOf[r.sample] = r.group || 'Ungrouped'
+    }
   }
   const all = [...sIdx.keys()]
   const X0 = all.map(() => new Array(fIdx.size).fill(0))
@@ -244,8 +376,13 @@ export function aggregate(M: Matrix, level: (typeof LEVELS)[number]) {
   const map = new Map<string, number>()
   const to = M.meta.map((m) => {
     let n: string | undefined
-    if (m.lineage) n = m.lineage.split(';').map((x) => x.trim())[li] || undefined
-    else if (m.rank.toLowerCase() === level.toLowerCase()) n = m.organism
+    if (m.lineage) {
+      const seg = m.lineage.split(';').map((x) => x.trim())[li]
+      if (seg) n = seg
+    }
+    if (!n && m.rank.toLowerCase() === level.toLowerCase() && m.organism) {
+      n = m.organism
+    }
     const key = n ?? 'Unassigned'
     if (!map.has(key)) {
       map.set(key, names.length)
@@ -276,10 +413,13 @@ export interface AlphaRow {
 export function alphaDiv(M: Matrix): AlphaRow[] {
   return M.samples.map((s, i) => {
     const t = M.X[i].reduce((a, b) => a + b, 0)
-    const p = M.X[i].filter((v) => v > 0).map((v) => v / t)
-    const H = -p.reduce((a, x) => a + x * Math.log(x), 0)
+    const p = t > 0 ? M.X[i].filter((v) => v > 0).map((v) => v / t) : []
+    const hRaw = -p.reduce((a, x) => a + x * Math.log(x), 0)
+    const H = Math.abs(hRaw) < 1e-12 ? 0 : hRaw
     const D = p.reduce((a, x) => a + x * x, 0)
-    return { sample: s, group: M.groupOf[s], observed: p.length, shannon: H, simpson: 1 - D, pielou: p.length > 1 ? H / Math.log(p.length) : null }
+    const sRaw = 1 - D
+    const simpson = p.length ? (Math.abs(sRaw) < 1e-12 ? 0 : Math.max(0, Math.min(1, sRaw))) : 0
+    return { sample: s, group: M.groupOf[s], observed: p.length, shannon: H, simpson, pielou: p.length > 1 ? H / Math.log(p.length) : null }
   })
 }
 
@@ -341,7 +481,7 @@ function jacobi(A: number[][]) {
 /** Classical PCoA (Gower double-centring). Explained variation = eigenvalue / sum of positive eigenvalues. */
 export function pcoa(D: number[][]) {
   const n = D.length
-  if (n < 3 || n > 150) return null
+  if (n < 3 || n > MAX_PCOA_SAMPLES) return null
   const A = D.map((r) => r.map((d) => -0.5 * d * d))
   const rm = A.map((r) => r.reduce((x, y) => x + y, 0) / n)
   const tm = rm.reduce((x, y) => x + y, 0) / n
@@ -412,8 +552,11 @@ export const bytes = (n: number) => (n < 1024 ? n + ' B' : n < 1048576 ? (n / 10
 
 export function toCSV(headers: string[], rows: (string | number | null)[][]) {
   const q = (v: string | number | null) => {
-    const s = v === null ? '' : String(v)
-    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s
+    if (v === null || v === undefined) return ''
+    if (typeof v === 'number') return Number.isFinite(v) ? String(v) : ''
+    let s = String(v)
+    if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`
+    return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s
   }
   return [headers, ...rows].map((r) => r.map(q).join(',')).join('\n')
 }

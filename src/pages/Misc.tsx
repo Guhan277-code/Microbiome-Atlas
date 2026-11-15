@@ -5,7 +5,6 @@ import { Badge, Btn, Card, Empty, Field, PageHeader, Segmented, Select, Tabs, To
 import { TEMPLATE_CSV } from '../lib/samples'
 import { LEVELS } from '../lib/science'
 import { Note } from './common'
-import { upsertProfile } from '../lib/supabase'
 
 const ICON = { upload: Upload, validation: ShieldCheck, analysis: BarChart3, report: FileText, error: AlertCircle, info: Info }
 const TONE = { upload: 'info', validation: 'ok', analysis: 'violet', report: 'ok', error: 'bad', info: 'mute' } as const
@@ -68,7 +67,7 @@ const DOCS: { id: string; title: string; body: React.ReactNode }[] = [
   { id: 'template', title: 'CSV Template', body: <><pre className="mono overflow-x-auto rounded-xl border border-line bg-[var(--solid)] p-3 text-xs">{TEMPLATE_CSV}</pre><Btn size="sm" className="mt-3" onClick={() => download('microbiome-atlas-template.csv', TEMPLATE_CSV)}><Download size={14} /> Download template</Btn></> },
   { id: 'upload', title: 'Uploading Data', body: <p>Drag a .csv file onto the upload area or use Browse Files. The file is validated locally before analysis. Authenticated users have their datasets synchronized safely to Supabase.</p> },
   { id: 'config', title: 'Configuring Columns', body: <p>Select the CSV column for every required field. Suggestions based on header names are shown but never applied silently: confirm each one. A column used for two fields triggers a warning.</p> },
-  { id: 'validate', title: 'Validating Datasets', body: <p>Twelve checks cover missing columns and values, non-numeric and negative abundances, duplicates, zero-total samples and unusual values. Errors (such as negative values) block progression. Warnings can be accepted after review. Data is never changed silently.</p> },
+  { id: 'validate', title: 'Validating Datasets', body: <p>Seventeen checks cover missing columns, duplicate mappings, CSV formatting, missing values, non-numeric and negative abundances, duplicate sample-feature pairs, inconsistent sample groups or taxonomy annotations, zero-total samples, positive-sample availability and unusual values. Errors (such as negative values or duplicate column mappings) block progression. Warnings can be accepted after review. Data is never changed silently.</p> },
   { id: 'rel', title: 'Understanding Relative Abundance', body: <><p><b>Relative Abundance (%) = Feature Abundance / Total Abundance in Sample x 100.</b></p><p>It expresses composition within a sample. It is not absolute abundance: if one taxon grows, the others shrink in relative terms even if their counts did not change.</p></> },
   { id: 'alpha', title: 'Understanding Alpha Diversity', body: <><p>Alpha diversity summarises one sample. Observed features counts features above zero; Shannon H = -sum(p ln p); Simpson is reported as <b>1 - D</b> with D = sum(p^2); Pielou evenness = H / ln(S).</p><p>Higher diversity is not automatically healthier or better.</p></> },
   { id: 'beta', title: 'Understanding Beta Diversity', body: <p>Beta diversity compares samples. Bray-Curtis dissimilarity ranges from 0 (identical) to 1 (nothing shared). PCoA is an ordination method that projects the distance matrix to two axes; it is not a diversity index. NMDS is not implemented.</p> },
@@ -92,7 +91,7 @@ export function Docs() {
 const TABS = [{ id: 'profile', label: 'Profile' }, { id: 'appearance', label: 'Appearance' }, { id: 'analysis', label: 'Analysis Preferences' }, { id: 'notifications', label: 'Notifications' }, { id: 'data', label: 'Data Preferences' }, { id: 'export', label: 'Export Preferences' }] as const
 
 export function Settings() {
-  const { settings, setSettings, theme, setTheme, user, notify } = useApp()
+  const { settings, setSettings, saveSettings, theme, setTheme, user, notify } = useApp()
   const [tab, setTab] = useState<(typeof TABS)[number]['id']>('profile')
   const [saving, setSaving] = useState(false)
 
@@ -103,22 +102,8 @@ export function Settings() {
     }
     setSaving(true)
     try {
-      await upsertProfile({
-        id: user.id,
-        display_name: settings.name,
-        email: settings.email || user.email,
-        settings: {
-          topN: settings.topN,
-          mode: settings.mode,
-          level: settings.level,
-          exportFormat: settings.exportFormat,
-          prefix: settings.prefix,
-        },
-      })
-      notify('info', 'Profile and preferences saved to Supabase.')
-    } catch (e: unknown) {
-      const err = e instanceof Error ? e.message : 'Failed to update profile.'
-      notify('error', `Error saving profile: ${err}`)
+      const ok = await saveSettings()
+      if (ok) notify('info', 'Profile and preferences saved to Supabase.')
     } finally {
       setSaving(false)
     }

@@ -1,10 +1,10 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { Download, FileText, Loader2 } from 'lucide-react'
-import { MODULES, useApp, type Dataset, type ModuleId } from '../store'
+import { MODULES, useApp, type Dataset, type ModuleId, type ReportRec } from '../store'
 import { BoxPlot, Donut, PALETTE, Scatter } from '../charts'
 import { Badge, Btn, Card, DataTable, PageHeader, Select, Tabs, Skeleton, download, when } from '../ui'
 import { Gate, Note, compose, useData } from './common'
-import { LEVELS, bcPair, bytes, fmt, pcoa, relMatrix, toCSV } from '../lib/science'
+import { LEVELS, MAX_PCOA_SAMPLES, bcPair, bytes, fmt, pcoa, relMatrix, toCSV } from '../lib/science'
 
 const TABS = [
   { id: 'overview', label: 'Overview' },
@@ -50,7 +50,8 @@ function Inner() {
   const [tab, setTab] = useState<Tab>('overview')
   const [runId, setRunId] = useState(ds.runs[0]?.id)
   const run = ds.runs.find((r) => r.id === runId) ?? ds.runs[0]
-  const inc = (m: ModuleId) => run?.modules.includes(m)
+  if (!run) return <Note tone="warn">No analysis runs recorded for this dataset.</Note>
+  const inc = (m: ModuleId) => run.modules.includes(m)
   return (
     <>
       <Card lift={false} className="mb-4 flex flex-wrap items-center gap-3 p-4 text-sm">
@@ -97,7 +98,7 @@ function Comp() {
   const { M, level } = useLevel()
   const all = M.samples.map((_s, i) => i)
   const c = compose(M, level, 8, all)
-  const mean = c.names.map((_n, j) => (c.rel.reduce((a, r) => a + r[j], 0) / c.rel.length) * 100)
+  const mean = c.names.map((_n, j) => (c.rel.reduce((a, r) => a + r[j], 0) / Math.max(1, c.rel.length)) * 100)
   return <Card lift={false} className="p-5"><h3 className="mb-3 font-bold">Mean composition ({level})</h3><Donut title={`Mean composition at ${level} level`} data={c.names.map((n, j) => ({ label: n, value: mean[j], color: c.colors[j] }))} unit="%" /></Card>
 }
 function AlphaT() {
@@ -107,16 +108,25 @@ function AlphaT() {
 function BetaT() {
   const { d, M, colorOf } = useData()
   const pc = useMemo(() => pcoa(d.D), [d])
-  if (!pc) return <Note tone="warn">PCoA could not be computed for this dataset.</Note>
+  if (!pc) {
+    return (
+      <Note tone="warn">
+        {M.samples.length > MAX_PCOA_SAMPLES
+          ? `PCoA ordination is capped at ${MAX_PCOA_SAMPLES} samples in the browser.`
+          : 'PCoA requires at least three samples with non-degenerate distances.'}
+      </Note>
+    )
+  }
   return <Card lift={false} className="p-5"><Scatter title="PCoA of Bray-Curtis dissimilarity" xLabel={`PCoA 1 (${(pc.explained[0] * 100).toFixed(1)}%)`} yLabel={`PCoA 2 (${(pc.explained[1] * 100).toFixed(1)}%)`} points={M.samples.map((s, i) => ({ x: pc.coords[i][0], y: pc.coords[i][1], label: s, group: M.groupOf[s], color: colorOf(M.groupOf[s]) }))} legend={d.groups.map((g) => ({ label: g, color: colorOf(g) }))} /></Card>
 }
 function TaxT() {
   const { M, d } = useData()
-  const rows = M.features.map((f, j) => ({ f, o: M.meta[j].organism, rank: M.meta[j].rank, rel: (d.R.reduce((a, r) => a + r[j], 0) / d.R.length) * 100, raw: M.X.reduce((a, r) => a + r[j], 0) }))
+  const rows = M.features.map((f, j) => ({ f, o: M.meta[j].organism, rank: M.meta[j].rank, rel: (d.R.reduce((a, r) => a + r[j], 0) / Math.max(1, d.R.length)) * 100, raw: M.X.reduce((a, r) => a + r[j], 0) }))
   return <Card lift={false} className="p-5"><DataTable initialSort={{ key: 'rel', dir: -1 }} rows={rows} cols={[{ key: 'f', label: 'Feature', mono: true }, { key: 'o', label: 'Organism' }, { key: 'rank', label: 'Rank' }, { key: 'raw', label: 'Total reads', mono: true, align: 'right', render: (r) => r.raw.toLocaleString() }, { key: 'rel', label: 'Mean relative abundance (%)', mono: true, align: 'right', render: (r) => fmt(r.rel, 3) }]} /></Card>
 }
 function groupBC(M: Dataset['M'], R: number[][], groups: string[]) {
-  const prof = (g: string) => { const ix = M.samples.map((_s, i) => i).filter((i) => M.groupOf[M.samples[i]] === g); return R[0].map((_x, j) => ix.reduce((s, i) => s + R[i][j], 0) / ix.length) }
+  if (!R.length || !R[0]?.length) return []
+  const prof = (g: string) => { const ix = M.samples.map((_s, i) => i).filter((i) => M.groupOf[M.samples[i]] === g); return R[0].map((_x, j) => ix.reduce((s, i) => s + R[i][j], 0) / Math.max(1, ix.length)) }
   const P = groups.map(prof)
   return groups.flatMap((a, i) => groups.slice(i + 1).map((b, k) => ({ pair: `${a} vs ${b}`, bc: bcPair(P[i], P[i + 1 + k]) })))
 }
@@ -163,24 +173,38 @@ function ReportsInner() {
   const [fmtX, setFmtX] = useState<string>(settings.exportFormat)
   const [chart, setChart] = useState(0)
   const ref = useRef<HTMLDivElement>(null)
+  const genTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => { if (genTimerRef.current) clearTimeout(genTimerRef.current) }, [])
+
   const myReports = reports.filter((r) => r.datasetId === ds.id)
-  const ttl = title || `${KINDS.find((k) => k.id === kind)!.label}: ${ds.name}`
+  const ttl = title || `${KINDS.find((k) => k.id === kind)?.label ?? 'Report'}: ${ds.name}`
   const avail = (s: string) => !['composition', 'alpha', 'beta', 'comparison'].includes(s) || !!ds.done[s as ModuleId]
-  const pickKind = (k: string) => { setKind(k); setSecs(KINDS.find((x) => x.id === k)!.secs); setGen(null) }
+  const pickKind = (k: string) => { setKind(k); setSecs(KINDS.find((x) => x.id === k)?.secs ?? KINDS[0].secs); setGen(null) }
+  const openSavedReport = (r: ReportRec) => {
+    if (KINDS.some((k) => k.id === r.kind)) setKind(r.kind)
+    setTitle(r.title)
+    setSecs(r.sections.length ? r.sections : KINDS[0].secs)
+    setGen(r.title)
+  }
   const use = secs.filter(avail)
   const all = M.samples.map((_s, i) => i)
   const c = useMemo(() => compose(M, level, 8, all), [M, level]) // eslint-disable-line react-hooks/exhaustive-deps
   const pc = useMemo(() => pcoa(d.D), [d])
   const gBC = useMemo(() => groupBC(M, d.R, d.groups), [M, d])
-  const meanRel = c.names.map((_n, j) => (c.rel.reduce((a, r) => a + r[j], 0) / c.rel.length) * 100)
-  const generate = () => {
+  const meanRel = c.names.map((_n, j) => (c.rel.reduce((a, r) => a + r[j], 0) / Math.max(1, c.rel.length)) * 100)
+  const generate = async () => {
+    if (busy) return
     setBusy(true)
-    setTimeout(() => {
+    const rec = await addReport({ datasetId: ds.id, title: ttl, kind, sections: use })
+    if (!rec) {
       setBusy(false)
-      addReport({ datasetId: ds.id, title: ttl, kind, sections: use })
-      setGen(ttl)
-      notify('report', `Report generated: ${ttl}`, ds.id)
-    }, 800)
+      return
+    }
+    genTimerRef.current = setTimeout(() => {
+      setBusy(false)
+      setGen(rec.title)
+      notify('report', `Report generated: ${rec.title}`, ds.id)
+    }, 300)
   }
   const fname = (ext: string) => `${settings.prefix}-${ds.id}-${kind}.${ext}`
   const svgs = () => [...(ref.current?.querySelectorAll('svg[data-chart]') ?? [])] as SVGSVGElement[]
@@ -201,7 +225,13 @@ function ReportsInner() {
     else if (fmtX === 'csv') {
       const parts: string[] = []
       if (use.includes('dataset')) parts.push('# Dataset', toCSV(['field', 'value'], [['name', ds.name], ['id', ds.id], ['samples', M.samples.length], ['features', M.features.length]]))
-      if (use.includes('composition')) parts.push('', `# Composition (${level}) mean relative abundance %`, toCSV([level, 'mean_relative_abundance_pct'], c.names.map((n, j) => [n, +meanRel[j].toFixed(4)])))
+      if (use.includes('composition')) {
+        const compRows = c.order.map((j) => [
+          c.A.names[j],
+          +((c.R.reduce((a, r) => a + r[j], 0) / Math.max(1, c.R.length)) * 100).toFixed(4),
+        ])
+        parts.push('', `# Composition (${level}) mean relative abundance %`, toCSV([level, 'mean_relative_abundance_pct'], compRows))
+      }
       if (use.includes('alpha')) parts.push('', '# Alpha diversity', toCSV(['sample', 'group', 'observed', 'shannon', 'simpson_1_minus_D', 'pielou'], d.alpha.map((a) => [a.sample, a.group, a.observed, a.shannon, a.simpson, a.pielou])))
       if (use.includes('beta')) parts.push('', '# Bray-Curtis matrix', toCSV(['sample', ...M.samples], M.samples.map((s, i) => [s, ...d.D[i]])))
       if (use.includes('comparison')) parts.push('', '# Group Bray-Curtis', toCSV(['groups', 'bray_curtis'], gBC.map((g) => [g.pair, g.bc])))
@@ -214,18 +244,31 @@ function ReportsInner() {
       if (fmtX === 'svg') download(fname('svg'), text, 'image/svg+xml')
       else {
         const img = new Image()
+        img.onerror = () => notify('error', 'Could not rasterize chart SVG to PNG in this browser.')
         img.onload = () => {
           const cv = document.createElement('canvas')
           cv.width = w; cv.height = h
-          cv.getContext('2d')!.drawImage(img, 0, 0, w, h)
-          cv.toBlob((b) => b && download(fname('png'), b, 'image/png'))
+          const ctx = cv.getContext('2d')
+          if (!ctx) {
+            notify('error', 'Canvas 2D context is unavailable for PNG export.')
+            return
+          }
+          ctx.drawImage(img, 0, 0, w, h)
+          cv.toBlob((b) => {
+            if (!b) notify('error', 'PNG export produced an empty image.')
+            else download(fname('png'), b, 'image/png')
+          }, 'image/png')
         }
         img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(text)
       }
     }
   }
   const [chartTitles, setChartTitles] = useState<string[]>([])
-  useEffect(() => { setChartTitles(svgs().map((s) => s.getAttribute('data-chart') ?? 'Chart')) }, [use.join(), busy, gen, fmtX]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const titles = svgs().map((s) => s.getAttribute('data-chart') ?? 'Chart')
+    setChartTitles(titles)
+    setChart((prev) => (prev < titles.length ? prev : 0))
+  }, [use.join(), busy, gen, fmtX]) // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div className="grid gap-5 xl:grid-cols-5">
       <div className="space-y-5 xl:col-span-2">
@@ -238,7 +281,7 @@ function ReportsInner() {
           <div><span className="label mb-2 block">Sections</span>
             <div className="grid gap-1.5">{Object.keys(SECLABEL).map((s) => <label key={s} className={`flex items-center gap-2 text-sm ${avail(s) ? '' : 'opacity-50'}`}><input type="checkbox" className="h-4 w-4 accent-cyan-400" disabled={!avail(s)} checked={secs.includes(s) && avail(s)} onChange={(e) => { setSecs(e.target.checked ? [...secs, s] : secs.filter((x) => x !== s)); setGen(null) }} />{SECLABEL[s]}{!avail(s) && <span className="text-xs text-faint">(not run for this dataset)</span>}</label>)}</div>
           </div>
-          <Btn variant="primary" className="w-full" onClick={generate} disabled={busy || !use.length}>{busy ? <><Loader2 size={15} className="animate-spin" /> Generating...</> : <><FileText size={15} /> Generate Report</>}</Btn>
+          <Btn variant="primary" className="w-full" onClick={() => void generate()} disabled={busy || !use.length}>{busy ? <><Loader2 size={15} className="animate-spin" /> Generating...</> : <><FileText size={15} /> Generate Report</>}</Btn>
         </Card>
         <Card lift={false} className="space-y-3 p-5">
           <h3 className="font-bold">Export</h3>
@@ -247,7 +290,27 @@ function ReportsInner() {
           <Btn className="w-full" onClick={doExport} disabled={!gen}><Download size={15} /> Export {fmtX.toUpperCase()}</Btn>
           {!gen && <p className="text-xs text-muted">Generate the report first to enable export.</p>}
         </Card>
-        <Card lift={false} className="p-5"><h3 className="mb-2 font-bold">Generated for this dataset</h3>{myReports.length ? <ul className="space-y-1.5 text-sm">{myReports.map((r) => <li key={r.id} className="flex justify-between gap-3"><span className="truncate">{r.title}</span><span className="shrink-0 text-xs text-muted">{when(r.at)}</span></li>)}</ul> : <p className="text-sm text-muted">None yet.</p>}</Card>
+        <Card lift={false} className="p-5">
+          <h3 className="mb-2 font-bold">Generated for this dataset</h3>
+          {myReports.length ? (
+            <ul className="space-y-1 text-sm">
+              {myReports.map((r) => (
+                <li key={r.id}>
+                  <button
+                    type="button"
+                    onClick={() => openSavedReport(r)}
+                    className="flex w-full items-center justify-between gap-3 rounded-lg px-2 py-1 text-left transition hover:bg-[var(--row)]"
+                  >
+                    <span className="truncate font-medium">{r.title}</span>
+                    <span className="shrink-0 text-xs text-muted">{when(r.at)}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-muted">None yet.</p>
+          )}
+        </Card>
       </div>
       <div className="xl:col-span-3">
         {busy ? <Card lift={false} className="space-y-3 p-6"><Skeleton h={36} /><Skeleton h={160} /><Skeleton h={220} /></Card> : (
@@ -261,7 +324,7 @@ function ReportsInner() {
               <table className="tbl mt-3 w-full"><thead><tr><th>{level}</th><th>Mean relative abundance (%)</th></tr></thead><tbody>{c.names.map((n, j) => <tr key={n}><td>{n}</td><td className="mono">{fmt(meanRel[j], 3)}</td></tr>)}</tbody></table></Sec>}
             {use.includes('alpha') && <Sec t="Alpha diversity"><BoxPlot title="Shannon index by group" yLabel="Shannon index (H')" groups={d.groups.map((g) => ({ name: g, color: colorOf(g), values: d.alpha.filter((a) => a.group === g).map((a) => a.shannon) }))} />
               <div className="mt-3 overflow-x-auto"><table className="tbl w-full"><thead><tr><th>Sample</th><th>Group</th><th>Obs.</th><th>Shannon</th><th>Simpson (1-D)</th><th>Pielou</th></tr></thead><tbody>{d.alpha.map((a) => <tr key={a.sample}><td className="mono">{a.sample}</td><td>{a.group}</td><td className="mono">{a.observed}</td><td className="mono">{fmt(a.shannon, 3)}</td><td className="mono">{fmt(a.simpson, 3)}</td><td className="mono">{fmt(a.pielou, 3)}</td></tr>)}</tbody></table></div></Sec>}
-            {use.includes('beta') && <Sec t="Beta diversity">{pc ? <Scatter title="PCoA of Bray-Curtis dissimilarity" xLabel={`PCoA 1 (${(pc.explained[0] * 100).toFixed(1)}%)`} yLabel={`PCoA 2 (${(pc.explained[1] * 100).toFixed(1)}%)`} points={M.samples.map((s, i) => ({ x: pc.coords[i][0], y: pc.coords[i][1], label: s, group: M.groupOf[s], color: colorOf(M.groupOf[s]) }))} legend={d.groups.map((g) => ({ label: g, color: colorOf(g) }))} /> : <p className="text-sm text-muted">PCoA not available for this dataset.</p>}</Sec>}
+            {use.includes('beta') && <Sec t="Beta diversity">{pc ? <Scatter title="PCoA of Bray-Curtis dissimilarity" xLabel={`PCoA 1 (${(pc.explained[0] * 100).toFixed(1)}%)`} yLabel={`PCoA 2 (${(pc.explained[1] * 100).toFixed(1)}%)`} points={M.samples.map((s, i) => ({ x: pc.coords[i][0], y: pc.coords[i][1], label: s, group: M.groupOf[s], color: colorOf(M.groupOf[s]) }))} legend={d.groups.map((g) => ({ label: g, color: colorOf(g) }))} /> : <p className="text-sm text-muted">{M.samples.length > MAX_PCOA_SAMPLES ? `PCoA ordination is capped at ${MAX_PCOA_SAMPLES} samples in the browser.` : 'PCoA requires at least three samples with non-degenerate distances.'}</p>}</Sec>}
             {use.includes('comparison') && <Sec t="Sample comparison">{gBC.length ? <table className="tbl w-full"><thead><tr><th>Groups</th><th>Bray-Curtis (mean profiles)</th></tr></thead><tbody>{gBC.map((g) => <tr key={g.pair}><td>{g.pair}</td><td className="mono">{fmt(g.bc, 4)}</td></tr>)}</tbody></table> : <p className="text-sm text-muted">Only one group present.</p>}<p className="sci mt-2 text-xs text-muted">Descriptive only; no significance test.</p></Sec>}
             {use.includes('validation') && <Sec t="Validation warnings">{ds.checks.filter((k) => k.status !== 'pass').length ? <ul className="sci list-disc space-y-1 pl-5 text-sm">{ds.checks.filter((k) => k.status !== 'pass').map((k) => <li key={k.id}><b>{k.title}</b> ({k.count} affected): {k.explanation}</li>)}</ul> : <p className="text-sm text-muted">All validation checks passed.</p>}</Sec>}
             {use.includes('limitations') && <Sec t="Limitations"><ul className="sci list-disc space-y-1 pl-5 text-sm text-muted">{LIMITS.map((m) => <li key={m}>{m}</li>)}</ul></Sec>}

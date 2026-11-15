@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { FlaskConical, Play } from 'lucide-react'
 import { MODULES, useApp, type ModuleId } from '../store'
 import { LEVELS, aggregate, availableLevels, derive, relMatrix, type Matrix } from '../lib/science'
@@ -31,6 +31,7 @@ export function compose(M: Matrix, level: (typeof LEVELS)[number], topN: number,
 
 export function Gate({ module, children }: { module: ModuleId | 'any'; children: ReactNode }) {
   const { active, draftFromDataset, go, runModules, notify } = useApp()
+  const [running, setRunning] = useState(false)
   if (!active) return null
   const label = module === 'any' ? '' : MODULES.find((m) => m.id === module)!.label
   if (active.runs.length === 0)
@@ -39,7 +40,28 @@ export function Gate({ module, children }: { module: ModuleId | 'any'; children:
     )
   if (module !== 'any' && !active.done[module])
     return (
-      <Empty icon={<FlaskConical size={26} />} title={`${label} has not been run for this dataset`} text="Run this module to compute its results from the dataset. Other modules and datasets are unaffected." action={<Btn variant="primary" onClick={() => { runModules(active.id, [module]); notify('analysis', `${label} completed for ${active.name}.`, active.id) }}><Play size={15} /> Run {label}</Btn>} />
+      <Empty
+        icon={<FlaskConical size={26} />}
+        title={`${label} has not been run for this dataset`}
+        text="Run this module to compute its results from the dataset. Other modules and datasets are unaffected."
+        action={
+          <Btn
+            variant="primary"
+            disabled={running}
+            onClick={async () => {
+              setRunning(true)
+              try {
+                const ok = await runModules(active.id, [module])
+                if (ok) notify('analysis', `${label} completed for ${active.name}.`, active.id)
+              } finally {
+                setRunning(false)
+              }
+            }}
+          >
+            <Play size={15} /> {running ? `Running ${label}...` : `Run ${label}`}
+          </Btn>
+        }
+      />
     )
   return <>{children}</>
 }
